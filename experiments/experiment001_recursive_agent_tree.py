@@ -4,6 +4,46 @@ Recursive Agent Tree Experiment
 An agent generates a function and can call a tool to spawn a sub-agent
 that generates another function. Sub-agents also have access to the same tool,
 forming a recursive tree. All generated functions are collected in post-order.
+
+## Experiment Results (2026-03-26)
+
+Model: claude-haiku-4-5
+Root task: analyze_text — takes a string, returns word_count, sentence_count,
+most_common_word, average_word_length.
+Max depth: 2
+
+### Tree Structure
+
+    analyze_text
+      count_words
+      count_sentences
+      analyze_text_statistics
+        find_most_common_word
+        average_word_length
+
+### Post-Order Output
+
+    1. count_words
+    2. count_sentences
+    3. find_most_common_word
+    4. average_word_length
+    5. analyze_text_statistics
+    6. analyze_text
+
+### Observations
+
+- Tree generation wins on decomposition: each agent has a small, focused context
+  and is less likely to lose coherence on long functions.
+- Coordination is lossy: parent describes what it wants in natural language,
+  child interprets independently. No shared type system or interface contract.
+- No backtracking: if a child produces a bad interface, the parent just works
+  with it. A linear generator can revise earlier code as it goes.
+- Global context blindness: leaf nodes know nothing about siblings. If
+  count_words and count_sentences should share tokenization, neither knows.
+- Duplication: each parent re-inlines children's code in its own submission
+  because it doesn't trust the assembly step.
+- The missing piece is a shared context — a spec or type signature that flows
+  down the tree so children are constrained, not just prompted.
 """
 
 from pathlib import Path
