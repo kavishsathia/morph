@@ -401,15 +401,23 @@ The system will detect that SearchBar doesn't exist and create it for you.
 
             self._print(f"{indent}  -> Auto-fork: {child_name} -> {child_path}")
 
+            # Read the stub content so the child doesn't need to
+            stub_content = ""
+            stub_path = os.path.join(self.project_root, child_path)
+            if os.path.exists(stub_path):
+                with open(stub_path) as f:
+                    stub_content = f.read()
+
             task_msg = (
                 f"Implement the component: {child_name}\n"
                 f"Write to: {child_path}\n"
                 f"{usage_context}\n\n"
-                f"A stub file already exists at {child_path} — it shows a placeholder in the browser.\n"
-                f"Read it, then REPLACE its entire content with your real implementation using replace_text.\n"
-                f"Replace the full stub content (everything in the file) with your real component.\n\n"
-                f"You have the parent's full context — you know the types, the project structure,\n"
-                f"and how this component is used. Implement it, then done().\n\n"
+                f"The stub file contains:\n```\n{stub_content}```\n\n"
+                f"DO NOT read any files. You already have all the context you need.\n"
+                f"You know the types, the project structure, and how this component is used.\n\n"
+                f"In your FIRST response, call replace_text on {child_path} to replace the\n"
+                f"ENTIRE stub content with your real implementation. Then done().\n"
+                f"That's it — one replace_text, one done. Two tool calls total.\n\n"
                 f"If you need sub-components, just import and use them — they'll be auto-created."
             )
 
@@ -418,16 +426,18 @@ The system will detect that SearchBar doesn't exist and create it for you.
             )
             futures.append((future, item, child_node))
 
-        # Wait for all children and collect their undefined imports
-        all_child_undefined: list[dict] = []
-        for future, item, child_node in futures:
-            child_undefined = future.result()
-            self._print(f"{indent}  <- Done: {item['name']}")
-            all_child_undefined.extend(child_undefined)
+        # Process children as they complete — fork their undefined imports immediately
+        from concurrent.futures import as_completed
+        future_to_info = {f: (item, child_node) for f, item, child_node in futures}
 
-        # Recursively auto-fork any undefined components from children
-        if all_child_undefined:
-            self._auto_fork_undefined(parent_node, all_child_undefined, depth + 1)
+        for completed_future in as_completed(future_to_info):
+            item, child_node = future_to_info[completed_future]
+            child_undefined = completed_future.result()
+            self._print(f"{indent}  <- Done: {item['name']}")
+
+            # Fork any undefined imports from this child RIGHT NOW, don't wait for siblings
+            if child_undefined:
+                self._auto_fork_undefined(child_node, child_undefined, depth + 1)
 
     # ── Infrastructure ──
 
@@ -443,9 +453,26 @@ The system will detect that SearchBar doesn't exist and create it for you.
             os.makedirs(os.path.dirname(main_path), exist_ok=True)
             with open(main_path, "w") as f:
                 f.write(self.MAIN_TSX)
-        # Pre-register main.tsx
+        # Write App.tsx stub so the browser shows something immediately
+        app_path = os.path.join(self.project_root, "src", "App.tsx")
+        with open(app_path, "w") as f:
+            f.write(
+                "import React from 'react';\n\n"
+                "const App: React.FC = () => (\n"
+                "  <div style={{\n"
+                "    display: 'flex', alignItems: 'center', justifyContent: 'center',\n"
+                "    minHeight: '100vh', background: '#f0f0f0', color: '#999',\n"
+                "    fontFamily: 'system-ui', fontSize: 18,\n"
+                "  }}>\n"
+                "    Building your app...\n"
+                "  </div>\n"
+                ");\n\n"
+                "export default App;\n"
+            )
+        # Pre-register
         with self._written_lock:
             self._written_files.add("src/main.tsx")
+            self._written_files.add("src/App.tsx")
         subprocess.run(["npm", "install", "--silent"], cwd=self.project_root, capture_output=True, timeout=60)
 
     def _start_vite(self):
@@ -478,12 +505,14 @@ The system will detect that SearchBar doesn't exist and create it for you.
             "2. src/utils/mockProducts.ts — mock data\n"
             "3. src/hooks/useProducts.ts — the custom hook\n"
             "4. src/App.tsx — the main app component\n\n"
+            "src/App.tsx already exists as a stub showing 'Building your app...'. \n"
+            "Use replace_text to replace its ENTIRE content with your real App component.\n\n"
             "For App.tsx, import and use sub-components as if they exist.\n"
             "Don't implement them — just import and use them with the right props.\n"
             "Other agents will auto-implement any component you reference.\n\n"
             "Example: import SearchBar from './components/SearchBar';\n"
             "         <SearchBar query={query} onChange={setQuery} />\n\n"
-            "Write all 4 files, then done()."
+            "Write types, utils, hook with append_to_file. Replace App.tsx with replace_text. Then done()."
         )
 
         # Run root agent
